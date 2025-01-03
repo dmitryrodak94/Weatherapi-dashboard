@@ -12,7 +12,7 @@ import json as json
 import logging
 
 API_KEY = '1ce371f748224092807201919242312'
-CITIES = ['London']
+CITIES = ['London', 'Paris']
 APPROACH = 'current'
 
 
@@ -112,10 +112,10 @@ def insert_data_location_weather(data, postgres_conn):
                 postgres_conn.execute(insert_location_data, (name_region, city, country))
             else:
                 logging.info(f'Location {city} {name_region} is already exist')
+        # postgres_conn.connection.commit()
 
     except Exception as e:
         logging.error(f"Error inserting location weather: {e}")
-    #postgres_conn.commit()
 
 def insert_data_date_weather(data, postgres_conn):
     try:
@@ -130,11 +130,12 @@ def insert_data_date_weather(data, postgres_conn):
                     VALUES(%s, %s, %s)
                 """
             postgres_conn.execute(insert_date_weather_data, (day, month, year))
+        # postgres_conn.connection.commit()
+
 
     except Exception as e:
         logging.error(f"Error inserting date weather: {e}")
 
-        #postgres_conn.commit()
 
 
 
@@ -148,11 +149,20 @@ def insert_data_today_day_weather(data, postgres_conn):
                 FROM location_weather
                 WHERE city = %s
             """
-            postgres_conn.execute(get_location_id, (d['location']['name'],))
-            location_id = postgres_conn.fetchone()[0]
-        
-            location_id = d['location']['name'] 
-            postgres_conn.execute(get_location_id, (location_id, ))
+            try:
+                postgres_conn.execute(get_location_id, (d['location']['name'],))
+                location_id_result = postgres_conn.fetchone()
+                if location_id_result is None:
+                    logging.info(f"City {d['location']['name']} not found, inserting...")
+                    insert_data_location_weather(d, postgres_conn)
+                    postgres_conn.execute(get_location_id, (d['location']['name']))
+                    location_id_result = postgres_conn.fetchone()
+                location_id = location_id_result[0]
+            except:
+                continue
+
+            # location_id = postgres_conn.fetchone()[0]
+            # postgres_conn.execute(get_location_id, (location_id, ))
             temp_avg = d['current']['temp_c']
             temp_min = d['current']['temp_c']
             temp_max = d['current']['temp_c']
@@ -165,12 +175,15 @@ def insert_data_today_day_weather(data, postgres_conn):
 
             insert_data_today_day_weather = """
                 INSERT INTO today_day_weather (
-                    temp_avg, temp_min, temp_max, wind_avg, wind_min, wind_max, 
+                    location_id,
+                    temp_avg, temp_min, temp_max,
+                    wind_avg, wind_min, wind_max, 
                     humidity_avg,humidity_min, humidity_max
                     )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             postgres_conn.execute(insert_data_today_day_weather, (
+                location_id,
                 temp_avg, temp_min, temp_max,
                 wind_avg, wind_min, wind_max,
                 humidity_avg, humidity_min, humidity_max
