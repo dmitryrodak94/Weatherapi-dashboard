@@ -1,2 +1,6 @@
 pgadmin
 postgres_data
+credentials.py
+config/
+logs/
+plugins/
