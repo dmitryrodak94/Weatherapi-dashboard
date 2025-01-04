@@ -10,9 +10,10 @@ import psycopg2
 import requests
 import json as json
 import logging
+import inspect
 
 API_KEY = '1ce371f748224092807201919242312'
-CITIES = ['London', 'Paris']
+CITIES = ['London', 'Paris', 'Berlin', 'Moscow', 'Kiev', 'Madrid']
 APPROACH = 'current'
 
 
@@ -120,21 +121,30 @@ def insert_data_location_weather(data, postgres_conn):
 def insert_data_date_weather(data, postgres_conn):
     try:
         for d in data:
-            day = d['location']['localtime'].split(' ')[0].split('-')[2]
-            month = d['location']['localtime'].split(' ')[0].split('-')[1]
-            year = d['location']['localtime'].split(' ')[0].split('-')[0]
-            
+            localtime = d['location']['localtime']
+            year, month, day = map(int, localtime.split()[0].split('-'))
 
-            insert_date_weather_data = """
-                    INSERT INTO date_weather (day, month, year)
-                    VALUES(%s, %s, %s)
-                """
-            postgres_conn.execute(insert_date_weather_data, (day, month, year))
+
+            check_exists_data = """
+                SELECT date_id
+                FROM date_weather
+                WHERE day = %s and month = %s and year = %s
+            """
+            postgres_conn.execute(check_exists_data, (int(day), int(month), int(year)))
+            result = postgres_conn.fetchone()
+
+            if result == None:
+                insert_date_weather_data = """
+                        INSERT INTO date_weather (day, month, year)
+                        VALUES(%s, %s, %s)
+                    """
+                postgres_conn.execute(insert_date_weather_data, (day, month, year))
+            else:
+                logging.info(f"Date {localtime} already exists in the database.")
+
         # postgres_conn.connection.commit()
-
-
     except Exception as e:
-        logging.error(f"Error inserting date weather: {e}")
+        logging.error(f"Error inserting date weather: {e} in {inspect.currentframe().f_code.co_name}")
 
 
 
@@ -158,8 +168,34 @@ def insert_data_today_day_weather(data, postgres_conn):
                     postgres_conn.execute(get_location_id, (d['location']['name']))
                     location_id_result = postgres_conn.fetchone()
                 location_id = location_id_result[0]
-            except:
-                continue
+            except Exception as e:
+                 logging.error(f"Error inserting location in today_day_weather: {e} in {inspect.currentframe().f_code.co_name}")
+
+            get_date_id = """
+                SELECT date_id
+                FROM date_weather
+                WHERE day = %s and month = %s and year = %s
+            """
+
+            localtime = d['location']['localtime']
+            year, month, day = map(int, localtime.split()[0].split('-'))     
+
+            try:
+                postgres_conn.execute(get_date_id, (day, month, year))
+                date_id_result = postgres_conn.fetchone()
+                if date_id_result is None:
+                    logging.info(f"City {localtime} not found, inserting...")
+                    insert_data_date_weather(d, postgres_conn)
+                    postgres_conn.execute(get_date_id, (day, month, year))
+                    date_id_result = postgres_conn.fetchone()
+                    if date_id_result is None:
+                        logging.error(f"Failed to retrieve date_id for {day}-{month}-{year}")
+                        continue
+                date_id = date_id_result[0]
+            except Exception as e:
+                 logging.error(f"Error inserting date weather in today_day_weather: {e} in {inspect.currentframe().f_code.co_name}")
+      
+
 
             # location_id = postgres_conn.fetchone()[0]
             # postgres_conn.execute(get_location_id, (location_id, ))
@@ -173,24 +209,29 @@ def insert_data_today_day_weather(data, postgres_conn):
             humidity_min = d['current']['humidity']
             humidity_max = d['current']['humidity']
 
+
+            
+
             insert_data_today_day_weather = """
                 INSERT INTO today_day_weather (
                     location_id,
                     temp_avg, temp_min, temp_max,
                     wind_avg, wind_min, wind_max, 
-                    humidity_avg,humidity_min, humidity_max
+                    humidity_avg, humidity_min, humidity_max,
+                    date_id
                     )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             postgres_conn.execute(insert_data_today_day_weather, (
                 location_id,
                 temp_avg, temp_min, temp_max,
                 wind_avg, wind_min, wind_max,
-                humidity_avg, humidity_min, humidity_max
+                humidity_avg, humidity_min, humidity_max,
+                date_id
                 ))
 
     except Exception as e:
-        logging.error(f"Error inserting today weather: {e}")
+        logging.error(f"Error inserting today weather: {e} in {inspect.currentframe().f_code.co_name}")
 
 
 def main():
@@ -199,10 +240,16 @@ def main():
     postgres_conn = api_connect.postgres_conn()
 
     if postgres_conn:
-        insert_data_location_weather(data, postgres_conn)
-        insert_data_date_weather(data, postgres_conn)
-        insert_data_today_day_weather(data, postgres_conn)
-        postgres_conn.connection.commit()
+        try:
+            insert_data_location_weather(data, postgres_conn)
+            insert_data_date_weather(data, postgres_conn)
+            insert_data_today_day_weather(data, postgres_conn)
+            postgres_conn.connection.commit()
+        except Exception as e:
+            logging.error(f"Error during main execution: {e}")
+        finally:
+            postgres_conn.connection.close()
+
     else:
         logging.error("Failed to connect to the database.")
 
